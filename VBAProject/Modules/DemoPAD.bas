@@ -1,4 +1,4 @@
-Attribute VB_Name = "Module1"
+Attribute VB_Name = "DemoPAD"
 Option Explicit
 
 
@@ -7,8 +7,9 @@ Sub DemoPAD()
     Debug.Print "初期化結果：" & PADTest.start(isDebugEnabled:=True)
 
 
-
-
+    Dim ResultPAD As Object
+    Set ResultPAD = PADTest.invokeMethod("GetAllTabsRequest")
+    Stop
 
 
 

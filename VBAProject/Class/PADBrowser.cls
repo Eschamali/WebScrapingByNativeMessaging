@@ -53,11 +53,38 @@ Private objAllMessages As Dictionary    'ブラウザからのイベントデー
 
 
 '***************************************************************************************************
+'                                  ■■■ メイン処理 ■■■
+'***************************************************************************************************
+'* 機能　　：CDPのMethod名と、parametersを渡して、低レベルにてブラウザ制御をします
+'---------------------------------------------------------------------------------------------------
+'* 返り値　：拡張機能へのコマンド実行結果のうち、`Result`オブジェクトのみ。失敗時は、`Nothing`となります。
+'* 引数　　：methodName     name項目にあたります
+'            params         parameters項目にあたります。Json-Dictionary形式で、KeyとItemを事前に定義したオブジェクト変数を指定します。
+'            StopError      `True`で、実行失敗時に`Err.Raise`で停止し、以降の処理を止めます
+'---------------------------------------------------------------------------------------------------
+Public Function invokeMethod(methodName As String, Optional params As Scripting.Dictionary, Optional StopError As Boolean = True) As Object
+    Const FromProcedureName As String = ThisClassName & ".invokeMethod"
+
+
+    Dim paramStr As String
+    Dim results As Dictionary
+
+    If params Is Nothing Then paramStr = "{}" Else paramStr = JsonConverter.ConvertToJson(params)
+    Set results = SendMessage("{""name"":""" & methodName & """,""parameters"":" & paramStr & "}")
+
+    'コマンド結果のうち、「result」項目オブジェクト飲み取り出して返却します
+    If results.Exists("result") Then Set invokeMethod = results.Item("result")
+    printMsg Debug_, "Invoked """ & methodName & """ with result: " & JsonConverter.ConvertToJson(results), FromProcedureName
+End Function
+
+
+
+'***************************************************************************************************
 '                                  ■■■ 核となる部分 ■■■
 '***************************************************************************************************
 '* 機能　　：CDP にメッセージを送信し、Chromium ブラウザでメッセージが受信されているかどうかを確認します
 '---------------------------------------------------------------------------------------------------
-'* 返り値　：拡張機能へのコマンド の実行結果(Json-Dictionary 形式)
+'* 返り値　：拡張機能へのコマンド の実行結果そのまんま(Json-Dictionary 形式)
 '* 引数　　：strMessage             Chromium ブラウザに送る拡張機能へのコマンド(プレーンテキスト)
 '            InternalUseMessages    非同期イベントをクラス内部で後程、使用したいときに、`New Dictionry`として、渡して有効化します。
 '***************************************************************************************************
@@ -341,8 +368,8 @@ End Function
 '* 返り値　：成功可否論理値
 '---------------------------------------------------------------------------------------------------
 '* 機能説明：公式のPowerAutomate拡張機能は起動直後、「LoadScriptsRequest」という初期化命令しか受け付けない状態になっているため、それを送れるようにします
-'* 注意事項：・よって必ずこのメソッドをまず1回以上呼び出します
-'            ・引数は一旦全てオプションにしてます
+'* 注意事項：・よって必ずこのメソッドをまず1回以上呼び出す必要があります
+'            ・引数は一旦全て、オプション化してます
 '***************************************************************************************************
 Public Function start(Optional backgroundVersion As Long = 4, Optional contentVersion As Long = 2, Optional apiVersion As Long = 4, Optional isDebugEnabled As Boolean) As Boolean
     Set core = New PADCore
