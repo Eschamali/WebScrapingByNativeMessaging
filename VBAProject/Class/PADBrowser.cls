@@ -20,11 +20,16 @@ Option Explicit
 Private Declare PtrSafe Function SHCreateDirectoryEx Lib "shell32" Alias "SHCreateDirectoryExA" (ByVal hwnd As LongPtr, ByVal pszPath As String, ByVal psa As LongPtr) As Long
 
 
+
+'***************************************************************************************************
+'                                  ■■■ 関連の定数定義 ■■■
+'***************************************************************************************************
 Private Const ThisClassName As String = "PADBrowser"                'ログのトレース用
 
 Private Const ERR_TIMEOUT As Long = 900
 Private Const ERR_PIPE As Long = 901
 Private Const ERR_PROTOCOL As Long = 902
+
 
 
 '***************************************************************************************************
@@ -50,9 +55,16 @@ Private objAllMessages As Dictionary    'ブラウザからのイベントデー
 '***************************************************************************************************
 '                                  ■■■ 核となる部分 ■■■
 '***************************************************************************************************
+'* 機能　　：CDP にメッセージを送信し、Chromium ブラウザでメッセージが受信されているかどうかを確認します
+'---------------------------------------------------------------------------------------------------
+'* 返り値　：拡張機能へのコマンド の実行結果(Json-Dictionary 形式)
+'* 引数　　：strMessage             Chromium ブラウザに送る拡張機能へのコマンド(プレーンテキスト)
+'            InternalUseMessages    非同期イベントをクラス内部で後程、使用したいときに、`New Dictionry`として、渡して有効化します。
+'***************************************************************************************************
 Private Function SendMessage(strMessage As String, Optional InternalUseMessages As Scripting.Dictionary) As Dictionary
     Const FromProcedureName As String = ThisClassName & ".SendMessage"
-    
+
+
     Dim strRes As String
     Dim intRes As Long
 
@@ -199,20 +211,16 @@ Private Function BrowserReceivedDataCheck(returnPADJson As Dictionary, InternalU
     End If
 End Function
 
-
-
-
-Private Sub printMsg(LogLevel_ As LogLevelName, strMsg As String, From As String, Optional isHeader As Boolean = False, Optional doRaiseError As Boolean = False)
-'----------------------------------------------------------------------------------
-' A custom printMsg that besides printing to the Immediate Window, it will
-' also print to a dated log file. This is useful at user level where
-' the Immediate Window is not easily accessible. doRaiseError will also raise an
-' error aside from printing the error message to the log file.
-' Updated: 07/01/26 Long Vh: the message output is disabled by default to avoid
-'                            spamming info. This can be turned on by setting globally
-'                            noDbgMsg = False or noLogging = False
-'----------------------------------------------------------------------------------
-
+'***************************************************************************************************
+'* 機能　　：ログメッセージを綺麗化します
+'---------------------------------------------------------------------------------------------------
+'* 引数　　：LogLevel_      ログレベル
+'            strMsg         ログメッセージ内容
+'            From           このメソッドを呼び出すプロシージャ名
+'            isHeader
+'            doRaiseError   `True`でVBA処理停止とします
+'***************************************************************************************************
+Private Sub printMsg(LogLevel_ As LogLevelName, strMsg As String, From As String, Optional isHeader As Boolean, Optional doRaiseError As Boolean)
     Dim logName As String, strFormattedMsg As String
 
     If isHeader Then strFormattedMsg = String(100, "-") & vbNewLine & strMsg & vbNewLine & String(100, "-") _
@@ -241,6 +249,7 @@ Private Sub printMsg(LogLevel_ As LogLevelName, strMsg As String, From As String
     If doRaiseError Then Err.Raise ERR_PROTOCOL, From, description:=strMsg
 
 End Sub
+
 
 
 '***************************************************************************************************
@@ -326,6 +335,15 @@ Public Function InitRegistry() As Boolean
     InitRegistry = True
 End Function
 
+'***************************************************************************************************
+'* 機能　　：ブラウザを操作する前のネゴシエーションを行います
+'---------------------------------------------------------------------------------------------------
+'* 返り値　：成功可否論理値
+'---------------------------------------------------------------------------------------------------
+'* 機能説明：公式のPowerAutomate拡張機能は起動直後、「LoadScriptsRequest」という初期化命令しか受け付けない状態になっているため、それを送れるようにします
+'* 注意事項：・よって必ずこのメソッドをまず1回以上呼び出します
+'            ・引数は一旦全てオプションにしてます
+'***************************************************************************************************
 Public Function start(Optional backgroundVersion As Long = 4, Optional contentVersion As Long = 2, Optional apiVersion As Long = 4, Optional isDebugEnabled As Boolean) As Boolean
     Set core = New PADCore
 
@@ -341,9 +359,6 @@ Public Function start(Optional backgroundVersion As Long = 4, Optional contentVe
     '結果を確認
     start = CBool(ResultCmd("result"))
 End Function
-
-
-
 
 
 
