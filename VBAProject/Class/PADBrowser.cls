@@ -26,9 +26,9 @@ Private Declare PtrSafe Function SHCreateDirectoryEx Lib "shell32" Alias "SHCrea
 '***************************************************************************************************
 Private Const ThisClassName As String = "PADBrowser"                'ログのトレース用
 
-Private Const ERR_TIMEOUT As Long = 900
-Private Const ERR_PIPE As Long = 901
-Private Const ERR_PROTOCOL As Long = 902
+Private Const ERR_TIMEOUT   As Long = 900
+Private Const ERR_PIPE      As Long = 901
+Private Const ERR_PROTOCOL  As Long = 902
 
 
 
@@ -48,14 +48,14 @@ Private brID            As String
 Private doLog As Boolean                'ログファイルにも、デバッグメッセージを残すか
 Private logPath As String               'ログファイルの保存フォルダパス
 Private seeRawSendMsgDbg As Boolean     'set to True if needing to see the raw json msg received from the browser for debugging
-Private objAllMessages As Dictionary    'ブラウザからのイベントデータを蓄積するための変数です
+Private objAllMessages As Dictionary    '拡張機能からのイベントデータを蓄積するための変数です
 
 
 
 '***************************************************************************************************
 '                                  ■■■ メイン処理 ■■■
 '***************************************************************************************************
-'* 機能　　：CDPのMethod名と、parametersを渡して、低レベルにてブラウザ制御をします
+'* 機能　　：Method名と、parametersを渡して、低レベルにてブラウザ制御をします
 '---------------------------------------------------------------------------------------------------
 '* 返り値　：拡張機能へのコマンド実行結果のうち、`Result`オブジェクトのみ。失敗時は、`Nothing`となります。
 '* 引数　　：methodName     name項目にあたります
@@ -288,8 +288,14 @@ End Sub
 '---------------------------------------------------------------------------------------------------
 '* 機能説明：「https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging?hl=ja」に従ったレジストリ登録をして、
 '            ブラウザからへExcelにパイプ接続する下準備を行います。
+'* 注意事項：これを行うと、PowerAutomateDeskTopからの操作ができなくなります
 '***************************************************************************************************
-Public Function InitRegistry() As Boolean
+Public Function InitialSetup() As Boolean
+    'ファイル名設定など
+    Const RapperBatName As String = "StartNewInstanceExcel.bat"
+    Const SaveJsonName As String = "host_manifest.json"
+
+
     '1. セルから設定を取得
     With ShSetting01_RegistrySet
         '1-1. 拡張機能情報
@@ -298,7 +304,6 @@ Public Function InitRegistry() As Boolean
         Dim description As String: description = .Range(.UseRangeName(3, "PADCore.InitRegistry")).value
 
         '1-2. ネイティブ メッセージング ホストの構成情報の保存パスの指定
-        Const SaveJsonName As String = "host_manifest.json"
         Dim FolderPath As String: FolderPath = .Range(.UseRangeName(4, "PADCore.InitRegistry")).value
 
         '1-3. 使用ブラウザ
@@ -313,11 +318,11 @@ Public Function InitRegistry() As Boolean
     'エラーチェック
     Select Case ResultCode
         Case 0, 183
-        Case Else: MsgBox "ネイティブ メッセージング ホストの構成情報の保存先のフォルダ作成に失敗しました", vbCritical, "ErrorCode：" & ResultCode: Exit Function
+        Case Else: MsgBox "ネイティブ メッセージング ホストの構成情報の保存先のフォルダ作成に失敗しました。" & vbCrLf & vbCrLf & "＜原因＞" & vbCrLf & ErrorDetail.GetMessage(ResultCode), vbCritical, "ErrorCode：" & ResultCode: Exit Function
     End Select
 
-    '3. Excelのexeパスを取得し、JSON用にバックスラッシュを二重化
-    Dim escapedPath As String: escapedPath = Replace(Application.Path & "\EXCEL.EXE /x", "\", "\\")
+    '3. ラッパーのBatファイルパスを取得し、JSON用にバックスラッシュを二重化
+    Dim escapedPath As String: escapedPath = Replace(FolderPath & "\" & RapperBatName, "\", "\\")
 
     '4. ネイティブ メッセージング ホストの構成情報になるJSON文字列の生成
     Dim jsonContent As String
@@ -329,37 +334,47 @@ Public Function InitRegistry() As Boolean
         "  ""allowed_origins"": [""chrome-extension://" & extID & "/""]" & vbCrLf & _
         "}"
 
-    '5. JSONファイルの書き出し
+    '5. 4の内容をJSONファイルとして、書き出し
     With Utf8Converter
         .BytesToSaveFile .BytesFromString(jsonContent), FolderPath, SaveJsonName
     End With
 
-    '6. レジストリの書き換え準備 (WMI使用)
+    '6. ラッパーBatに記述する内容を生成
+    Dim BatContent As String
+    BatContent = "@echo off" & vbCrLf & Chr(34) & Application.Path & "\EXCEL.EXE"" /x """ & OneDrivePathToLocalPath(ThisWorkbook.FullName) & Chr(34)
+
+    '7. 6の内容をBatファイルとして、書き出し
+    Dim fNum As Integer: fNum = FreeFile
+    Open FolderPath & "\" & RapperBatName For Output As #fNum
+        Print #fNum, BatContent;
+    Close #fNum
+
+    '8. レジストリの書き換え準備 (WMI使用)
     Const HKCU              As Long = &H80000001                '現在のログインユーザー単位。本家のPowerAutomateDesktopもこれに倣ってるので
     Const TargetBaseKeyName As String = "NativeMessagingHosts"
 
     Dim objReg As Object
     Set objReg = GetObject("winmgmts:{impersonationLevel=impersonate}!\\.\root\default:StdRegProv")
 
-    '7. 対象レジストリキーパス生成
+    '9. 対象レジストリキーパス生成
     '※一旦は、Edge or Chrome のみとする
     Dim TargetKeyPath As String
     TargetKeyPath = "Software\" & IIf(ChromeUse, _
                     "Google\Chrome\", _
                     "Microsoft\Edge\") & TargetBaseKeyName & "\" & appName
 
-    '8. キーを作成
+    '10. キーを作成
     '※既存でも0が返ります
     ResultCode = objReg.CreateKey(HKCU, TargetKeyPath)
     If ResultCode <> 0 Then MsgBox "レジストリキーパス「" & TargetKeyPath & "」の作成に失敗しました。", vbCritical, "ErrorCode：" & ResultCode: Exit Function
 
-    '9. 値をセット (JSONファイルへのパス)
+    '11. 値をセット (JSONファイルへのパス)
     '※既定値なので値の名前に空文字を指定)
     ResultCode = objReg.SetStringValue(HKCU, TargetKeyPath, "", FolderPath & "\" & SaveJsonName)
     If ResultCode <> 0 Then MsgBox "レジストリキー名「" & appName & "」の規定値への書き込みに失敗しました。", vbCritical, "ErrorCode：" & ResultCode: Exit Function
 
-    '10. Done!
-    InitRegistry = True
+    '12. Done!
+    InitialSetup = True
 End Function
 
 '***************************************************************************************************
@@ -385,6 +400,33 @@ Public Function start(Optional backgroundVersion As Long = 4, Optional contentVe
 
     '結果を確認
     start = CBool(ResultCmd("result"))
+End Function
+
+'***************************************************************************************************
+'* 機能　　：このExcelが、OneDrive上で実行されてる場合のパス変換処理を行います
+'---------------------------------------------------------------------------------------------------
+'* 返り値　：ローカルパス
+'* 引数　　：Path                   基本は、`thisworkbook.path`を指定
+'            UsePrivateOneDrive     社内個人OneDriveの場合は、`False`にしてください
+'---------------------------------------------------------------------------------------------------
+'* 機能説明：開いてるExcelがOneDriveにあると、`thisworkbook.path`がインターネット上のURLになってしまい、一部操作ができなくなる問題に対処した物となります。
+'            純ローカルなら、そのまま返します。
+'            個人向けOneDrive と ビジネス向け個人OneDrive に対応してます。先頭の定数で、スイッチングしてください
+'
+'* 注意事項：SharePointの場合は、自力でコードを書く必要があります
+'***************************************************************************************************
+Private Function OneDrivePathToLocalPath(Path As String, Optional UsePrivateOneDrive As Boolean = True) As String
+    'http始まりじゃないなら、そのまま返して終了
+    If Left(Path, 4) <> "http" Then OneDrivePathToLocalPath = Path: Exit Function
+
+    '個人OneDriveモードなら識別番号分、ローカルパスに置き換えて結合
+    If UsePrivateOneDrive Then
+        OneDrivePathToLocalPath = Environ("OneDrive") & Mid(Path, 41)
+    
+    '個人BusinessOneDriveモードなら"Documents"以降のパスを抜き出して、ローカルパスと結合
+    Else
+        OneDrivePathToLocalPath = Environ("OneDriveCommercial") & Evaluate("TEXTAFTER(""" & Path & """,""/Documents"")")
+    End If
 End Function
 
 
