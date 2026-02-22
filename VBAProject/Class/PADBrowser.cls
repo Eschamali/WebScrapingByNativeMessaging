@@ -61,7 +61,7 @@ Private objAllMessages As Dictionary    '拡張機能からのイベントデー
 '* 引数　　：methodName     name項目にあたります
 '            params         parameters項目にあたります。Json-Dictionary形式で、KeyとItemを事前に定義したオブジェクト変数を指定します。
 '            StopError      `True`で、実行失敗時に`Err.Raise`で停止し、以降の処理を止めます
-'---------------------------------------------------------------------------------------------------
+'***************************************************************************************************
 Public Function invokeMethod(methodName As String, Optional params As Scripting.Dictionary, Optional StopError As Boolean = True) As Object
     Const FromProcedureName As String = ThisClassName & ".invokeMethod"
 
@@ -76,6 +76,15 @@ Public Function invokeMethod(methodName As String, Optional params As Scripting.
     If results.Exists("result") Then Set invokeMethod = results.Item("result")
     printMsg Debug_, "Invoked """ & methodName & """ with result: " & JsonConverter.ConvertToJson(results), FromProcedureName
 End Function
+
+'***************************************************************************************************
+'* 機能　　：標準入出力の設定情報のみ反映します
+'---------------------------------------------------------------------------------------------------
+'* 注意事項：既に、アクティベーション処理を行った時に使うこと
+'***************************************************************************************************
+Public Sub reattach()
+    Set core = New PADCore
+End Sub
 
 
 
