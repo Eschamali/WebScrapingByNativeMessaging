@@ -174,15 +174,12 @@ Private Function SendMessage(strMessage As String, Optional InternalUseMessages 
         If intRes > 0 Then
             'データあり。1件ずつとして保証されてるはず
             If seeRawSendMsgDbg Then printMsg Trace_, "Raw - strRes = " & strRes, FromProcedureName
-            
-            'Jsonパースを行う
-            Dim JsonDic As Dictionary: Set JsonDic = JsonConverter.ParseJson(strRes)
 
             '受信データのチェックを行うプロシージャへ遷移します。
-            If BrowserReceivedDataCheck(JsonDic, InternalUseMessages, lngCurrentId) Then
+            If BrowserReceivedDataCheck(strRes, InternalUseMessages, lngCurrentId) Then
                 '直近に送ったコマンド結果であることを確認できたので、受信ループ終了フラグを立てて、コマンド結果も返す
                 ResultSendCommand = True
-                Set SendMessage = JsonDic    'コマンド結果を返却
+                Set SendMessage = JsonConverter.ParseJson(strRes)    'コマンド結果を返却
             End If
         Else
             'データなしの場合は、エラーコードチェックを行う
@@ -219,7 +216,7 @@ End Function
 '               ・コマンド構文エラーによる、ID項目なし
 '
 '            FALSE:受信ループを継続する合図。
-'               ・`CDPJsonString`は、ブラウザからのイベント情報である
+'               ・`JsonString`は、ブラウザからのイベント情報である
 '
 '* 引数　　：returnPADJson          1件分のJson-Dictionary形式のブラウザからのイベントやPAD-Jsonコマンド結果
 '            InternalUseMessages    クラス内プロシージャで、イベント内容を扱う用として蓄積させる参照変数
@@ -228,22 +225,158 @@ End Function
 '* 詳細説明：イベントデータ or CDP-Jsonコマンド結果 or 構文エラー の確認をし、ブラウザイベントの場合はついでに、イベント情報を格納します。
 '* 注意事項；CDP-Jsonコマンド結果IDの不一致(シングルスレッド配下なら多分ないはず...)の場合は、不整合により不安定につながるため、エラーで停止します
 '***************************************************************************************************
-Private Function BrowserReceivedDataCheck(returnPADJson As Dictionary, InternalUseMessages As Dictionary, checkCommandID As Long) As Boolean
+Private Function BrowserReceivedDataCheck(returnPADJson As String, InternalUseMessages As Dictionary, checkCommandID As Long) As Boolean
     Const FromProcedureName As String = ThisClassName & ".BrowserReceivedDataCheck"
 
 
     '======================================= チェック開始 =======================================
-    '--------- 1. 拡張機能からのコマンド返信か？ ---------
-    If returnPADJson.Exists("requestId") Then
-        '--------- 2. そのIDは、クラス内変数に記録してるIDと一致してるか？ ---------
-        If returnPADJson("requestId") = checkCommandID Then
-            '正しいコマンド結果が返ったので、受信ループ終了フラグを返すようにする
-            BrowserReceivedDataCheck = True
-            printMsg Trace_, "It was confirmed that the execution requestId matches the one recorded in Excel. ID:" & checkCommandID, FromProcedureName
+    Dim ResultCommandID As Long, AsynchronousEventName As String
+    Dim JsonDictionaryObj As Dictionary
+    Dim FlagValue As Long
+
+    Const resultCommand As Long = 2 ^ 0 'クラス内変数に記録してるIDのコマンド結果を検知出来た
+    Const mismatchID    As Long = 2 ^ 1 'クラス内変数に記録してるIDとは違うコマンド結果が検知された。※Err.Raiseで止めるのであまり意味ないかも
+    Const browserEvent  As Long = 2 ^ 2 '非同期イベントである
+    Const EventCapture  As Long = 2 ^ 3 '非同期イベントキャプチャモードである
+    Dim mask As Long: mask = resultCommand + mismatchID + browserEvent + EventCapture
+
+
+    '--------- 1. 拡張機能からのイベントか？ ---------
+    If GetContentsNotify(returnPADJson, AsynchronousEventName) Then
+        FlagValue = FlagValue Or browserEvent
+
+        '--------- 2. いずれかのDictionary変数が、非同期イベントキャプチャモードか？ ---------
+        If (objAllMessages Is Nothing) And (InternalUseMessages Is Nothing) Then
+            '両方とも`Nothing`なら、わざわざ中身を解析する意味がないので、パーサーは使わない
+            printMsg Trace_, "The current process has asynchronous event capture mode disabled. Performance is prioritized, so the JSON parser is not used.", FromProcedureName
         Else
-            '何かの拍子でずれてるようだ... シングルスレッド配下なら多分ないはず... だがずれてたら、不整合につながるため、エラーで止める
-            printMsg ERROR_, "The command result was received(id:" & returnPADJson("requestId") & "), but it does not match the ID(" & checkCommandID & ") recorded in Excel. Processing will be stopped due to the inconsistency.", FromProcedureName, doRaiseError:=True
+            'イベントキャプチャモードなので、JsonPurserを使用する
+            FlagValue = FlagValue Or EventCapture
+            printMsg Trace_, "A JSON parser is used for processing that requires asynchronous event information.", FromProcedureName
+            Set JsonDictionaryObj = JsonConverter.ParseJson(returnPADJson)
         End If
+    Else
+        FlagValue = FlagValue Or resultCommand
+
+        '--------- 2. `requestId`項目があるか？ ---------
+        If GetContentsResult(returnPADJson, ResultCommandID) Then
+            '--------- 3. そのrequestIdは、クラス内変数に記録してるrequestIdと一致してるか？ ---------
+            If ResultCommandID = checkCommandID Then
+                '正しいコマンド結果が返ったので次項に、受信ループ終了フラグを返すようにする
+                printMsg Trace_, "It was confirmed that the execution command ID matches the one recorded in Excel. ID:" & checkCommandID, FromProcedureName
+            Else
+                '何かの拍子でずれてるようだ... シングルスレッド配下なら多分ないはず... だがずれてたら、不整合につながるため、エラーで止める
+                FlagValue = FlagValue Or mismatchID
+                printMsg ERROR_, "The command result was received(id:" & ResultCommandID & "), but it does not match the requestId(" & checkCommandID & ") recorded in Excel. Processing will be stopped due to the inconsistency.", FromProcedureName, doRaiseError:=True
+            End If
+        Else
+            '`notify`も`requestId`項目もない場合、コマンドの構文エラーとして返った可能性があるとし、受信ループ終了とする
+            printMsg WARN_, "Both the `requestId` and `notify` fields are missing. This may be a syntax error.", FromProcedureName
+        End If
+    End If
+
+
+    '======================================= このプロシージャから抜けるか判定 =======================================
+    Dim judgementBit As Long
+
+    '1. 送ったコマンドの結果は来たので、受信ループを止めて、抜けるか？
+    judgementBit = resultCommand
+    If (FlagValue And mask) = judgementBit Then BrowserReceivedDataCheck = True: Exit Function
+
+    '2. 受信ループは止めないが、イベントキャプチャしないモード(格納用のDictionaryがどちらもNothing or 古いSessionID)なので、次項の格納処理はせず、抜けるか？
+    judgementBit = browserEvent
+    If (FlagValue And mask) = judgementBit Then BrowserReceivedDataCheck = False: Exit Function
+
+End Function
+
+'***************************************************************************************************
+'* 機能　　：ブラウザからの受信データの構造をチェックする際の1つ、`result`チェックを行います
+'---------------------------------------------------------------------------------------------------
+'* 返り値  ：存在有無論理値
+'* 引数　　：JsonString         ネイティブ メッセージング プロトコルのレスポンス(Json文字列そのまんま)
+'            idValueContents    コマンド結果のID値を格納する変数(参照渡しによって返します)
+'***************************************************************************************************
+Private Function GetContentsResult(jsonString As String, ByRef requestIdValueContents As Long) As Boolean
+    Const FromProcedureName As String = ThisClassName & ".GetContentsID"
+
+
+    '検索設定
+    Const SearchKeyName     As String = "result"    '検索文字列
+    Const SearchKeyName2    As String = "requestId" '検索文字列
+    Const StartSearchPos    As Long = 3             'あるべき位置
+
+
+    '1. 文字列を探索
+    Dim StartPos As Long
+    StartPos = InStr(StartSearchPos, jsonString, SearchKeyName)
+
+    '2. 所定の位置にない場合は、存在しないとし、抜ける
+    '下記の例に基づき、3文字目にない場合は、コマンド結果ではないとして、扱います。
+    '・{"result":..."requestId":"0"}
+    If StartPos = StartSearchPos Then
+        '3. 後ろから探してみる
+        StartPos = InStrRev(jsonString, SearchKeyName2) + Len(SearchKeyName2) + Len(""":""") '「requestId":"」分、ずらすイメージ
+
+        '4. ID値の終点を求める
+        Dim EndPos As Long
+        EndPos = InStr(StartPos, jsonString, """,")
+
+        '5. ID値を取り出す
+        On Error Resume Next
+            requestIdValueContents = Mid(jsonString, StartPos, EndPos - StartPos)
+            If Err.Number Then
+                GetContentsResult = False
+                printMsg Trace_, "`requestId`という文字列はありますが、数字ではないようです...", FromProcedureName
+            Else
+                GetContentsResult = True
+                printMsg Trace_, "This response is the command result. requestId:" & requestIdValueContents, FromProcedureName
+            End If
+        On Error GoTo 0
+    Else
+        GetContentsResult = False
+        printMsg Trace_, "This response does not have an `requestId`.", FromProcedureName
+    End If
+End Function
+
+'***************************************************************************************************
+'* 機能　　：ブラウザからの受信データの構造をチェックする際の1つ、`notify`チェックを行います
+'---------------------------------------------------------------------------------------------------
+'* 返り値  ：存在有無論理値
+'* 引数　　：JsonString             ネイティブ メッセージング プロトコルのレスポンス(Json文字列そのまんま)
+'            methodValueContents    非同期イベントのイベント名(参照渡しによって返します)
+'***************************************************************************************************
+Private Function GetContentsNotify(jsonString As String, ByRef notifyValueContents As String) As Boolean
+    Const FromProcedureName As String = ThisClassName & ".GetContentsMethod"
+
+
+    '検索設定
+    Const SearchKeyName     As String = "notify"    '検索文字列
+    Const StartSearchPos    As Long = 3             'あるべき位置
+
+
+    '1. 文字列を探索
+    Dim StartPos As Long
+    StartPos = InStr(StartSearchPos, jsonString, SearchKeyName)
+
+    '2. 所定の位置にない場合は、存在しないとし、抜ける
+    '下記の例に基づき、3文字目にない場合は、非同期イベントではないとして、扱います。
+    '・{"notify":"...
+    If StartPos = StartSearchPos Then
+        GetContentsNotify = True
+
+        '3. 開始位置をうまい具合にずらす
+        StartPos = StartSearchPos + Len(SearchKeyName) + Len(""":""") '「notify":"」分、ずらすイメージ
+
+        '4. イベント名の終点を求める
+        Dim EndPos As Long
+        EndPos = InStr(StartPos, jsonString, """,")
+
+        '5. イベント名を取り出す
+        notifyValueContents = Mid(jsonString, StartPos, EndPos - StartPos)
+        printMsg Trace_, "This response is an asynchronous event: " & notifyValueContents, FromProcedureName
+    Else
+        GetContentsNotify = False
+        printMsg Trace_, "This response does not have an `method`.", FromProcedureName
     End If
 End Function
 
