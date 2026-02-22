@@ -54,7 +54,8 @@ Private hStdErrOut      As LongPtr
 '            Err_PeekNamedPipe  PeekNamedPipe にてエラーが起こった際のエラーコードを格納します。実質返り値です
 '            Err_ReadFile       ReadFile にてエラーが起こった際のエラーコードを格納します。実質返り値です
 '---------------------------------------------------------------------------------------------------
-'* 機能説明：読み取りは非ブロッキングです。データがなくても、次に進めれます。各種エラーコードは、第2引数以降で確認して下さい。
+'* 機能説明：・読み取りは非ブロッキングです。データがなくても、次に進めれます。各種エラーコードは、第2引数以降で確認して下さい。
+'            ・ネイティブ メッセージング プロトコル に従った方式で処理していきます
 '***************************************************************************************************
 Public Function readProcSTD(ByRef strData As String, ByRef Err_PeekNamedPipe As Long, ByRef Err_ReadFile As Long) As Long
     'エラーコードの初期化
@@ -102,6 +103,9 @@ Public Function readProcSTD(ByRef strData As String, ByRef Err_PeekNamedPipe As 
                 'API関数:ReadFile が失敗した場合は、0 を返すため、`Err_ReadFile`にエラーコードを格納
                 Err_ReadFile = Err.LastDllError
             End If
+        Else
+            '失敗なので、エラーコードを入れる
+            Err_ReadFile = Err.LastDllError
         End If
     End If
 End Function
@@ -113,6 +117,8 @@ End Function
 '* 引数　　：strData            コマンド内容
 '            ErrorSendMode      `True` ：標準出力エラーとして送ります
 '                               `False`：標準出力として送ります。コマンド構文に従う必要があります。
+'---------------------------------------------------------------------------------------------------
+'* 機能説明：ネイティブ メッセージング プロトコル に従った方式で送っていきます
 '***************************************************************************************************
 Public Function writeProc(ByVal strData As String, Optional ErrorSendMode As Boolean) As Long
     '1. 引数に応じて使うハンドル情報を切り替えます
