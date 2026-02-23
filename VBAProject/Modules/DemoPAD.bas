@@ -49,7 +49,7 @@ Sub ShowAllTabs()
     PADTest.reattach
 
     Dim ResultPAD As Object
-    Set ResultPAD = PADTest.invokeMethod("GetAllTabsRequest")
+    Set ResultPAD = PADTest.invokeName("GetAllTabsRequest")
 
     'タブ情報をDownloadsフォルダに保存
     With UTF8Conv
@@ -75,7 +75,7 @@ Sub SaveEvent()
     Set PADTest.BrowserEvents = New Dictionary
 
     Dim ResultPAD As Object
-    Set ResultPAD = PADTest.invokeMethod("GetAllTabsRequest")
+    Set ResultPAD = PADTest.invokeName("GetAllTabsRequest")
 
     'イベント情報をDownloadsフォルダに保存
     With UTF8Conv

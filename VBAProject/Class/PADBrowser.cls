@@ -44,7 +44,7 @@ Private core        As PADCore
 Private ErrorDetail As New WinApiError  'エラーコードから、詳細を取得するやつ
 
 Private LogControl      As New Logger        'ログレベルの制御
-Private JsonConverter   As New WebJsonConverter
+Private jsConverter   As New WebJsonConverter
 Private timerOut        As Long
 Private lngLastID       As Long
 Private brID            As String
@@ -52,6 +52,7 @@ Private doLog As Boolean                'ログファイルにも、デバッグ
 Private logPath As String               'ログファイルの保存フォルダパス
 Private seeRawSendMsgDbg As Boolean     'set to True if needing to see the raw json msg received from the browser for debugging
 Private objAllMessages As Dictionary    '拡張機能からのイベントデータを蓄積するための変数です
+Private errorDetails As Dictionary      'コマンド実行時の最後のエラー情報
 
 
 
@@ -100,6 +101,35 @@ Property Set BrowserEvents(ObjDic As Dictionary)
     End If
 End Property
 
+'***************************************************************************************************
+'* 機能　　：コマンド結果を得るためのタイムアウト時間を設定します
+'---------------------------------------------------------------------------------------------------
+'* GET返値 ：設定中のタイムアウト秒数
+'* LET引数 ：置き換えるタイムアウト秒数
+'---------------------------------------------------------------------------------------------------
+'* 機能説明：最初のブラウザ起動時の遷移完了判定や、CDP-Json コマンド結果を得るのに待つ時間を設定します。デフォルトは、45sです。
+'***************************************************************************************************
+Property Get TimeOutSecond() As Long
+    TimeOutSecond = timerOut
+End Property
+
+Property Let TimeOutSecond(TimeSec As Long)
+    timerOut = TimeSec
+End Property
+
+'***************************************************************************************************
+'* 機能　　：コマンド結果のうち、最後のエラー情報を取得します
+'---------------------------------------------------------------------------------------------------
+'* GET返値 ：最後のエラー情報
+'---------------------------------------------------------------------------------------------------
+'* 注意事項：・あくまでも、「最後」のエラー情報なので、成功しても消滅しません。`Err.LastDllError`に準拠してます。
+'            ・適切な`invokeName`を実行したつもりなのに返り値が、`Nothing`となるのが、エラーの目印となるので、それでこのエラー情報を見に行ってください。
+'            ・`invokeMethod`の`StopError`が`Flase`だと実質機能しません。
+'***************************************************************************************************
+Property Get LastCDPJsonError() As Dictionary
+    Set LastCDPJsonError = errorDetails
+End Property
+
 
 
 '***************************************************************************************************
@@ -112,19 +142,32 @@ End Property
 '            params         parameters項目にあたります。Json-Dictionary形式で、KeyとItemを事前に定義したオブジェクト変数を指定します。
 '            StopError      `True`で、実行失敗時に`Err.Raise`で停止し、以降の処理を止めます
 '***************************************************************************************************
-Public Function invokeMethod(methodName As String, Optional params As Scripting.Dictionary, Optional StopError As Boolean = True) As Object
+Public Function invokeName(methodName As String, Optional params As Scripting.Dictionary, Optional StopError As Boolean = True) As Object
     Const FromProcedureName As String = ThisClassName & ".invokeMethod"
 
 
     Dim paramStr As String
     Dim results As Dictionary
 
-    If params Is Nothing Then paramStr = "{}" Else paramStr = JsonConverter.ConvertToJson(params)
+    If params Is Nothing Then paramStr = "{}" Else paramStr = jsConverter.ConvertToJson(params)
     Set results = SendMessage("{""name"":""" & methodName & """,""parameters"":" & paramStr & "}")
 
+    'エラーチェック
+    If invokeError(results) Then
+        'エラーによる`Err.Raise`で止めるか？
+        If StopError Then
+            'エラーになったmethod名と、結果生responseを表示して停止
+            printMsg ERROR_, "Failed to invoke name """ & methodName & """" & vbCrLf & vbCrLf & "=== RawErrorResponse ===" & vbCrLf & jsConverter.ConvertToJson(results), FromProcedureName, doRaiseError:=True
+        Else
+            'エラーになったmethod名だけログ出して続行
+            printMsg WARN_, "Failed to invoke name """ & methodName & """", FromProcedureName
+        End If
+    End If
+
+
     'コマンド結果のうち、「result」項目オブジェクト飲み取り出して返却します
-    If results.Exists("result") Then Set invokeMethod = results.Item("result")
-    printMsg Debug_, "Invoked """ & methodName & """ with result: " & JsonConverter.ConvertToJson(results), FromProcedureName
+    If results.Exists("result") Then Set invokeName = results.Item("result")
+    printMsg Debug_, "Invoked """ & methodName & """ with result: " & jsConverter.ConvertToJson(results), FromProcedureName
 End Function
 
 '***************************************************************************************************
@@ -229,7 +272,7 @@ Private Function SendMessage(strMessage As String, Optional InternalUseMessages 
             If BrowserReceivedDataCheck(strRes, InternalUseMessages, lngCurrentId) Then
                 '直近に送ったコマンド結果であることを確認できたので、受信ループ終了フラグを立てて、コマンド結果も返す
                 ResultSendCommand = True
-                Set SendMessage = JsonConverter.ParseJson(strRes)    'コマンド結果を返却
+                Set SendMessage = jsConverter.ParseJson(strRes)    'コマンド結果を返却
             End If
         Else
             'データなしの場合は、エラーコードチェックを行う
@@ -257,6 +300,45 @@ Private Function SendMessage(strMessage As String, Optional InternalUseMessages 
         If Timer - timerStart > timerOut Then Err.Raise ERR_TIMEOUT, FromProcedureName, "Timeout waiting for browser to return message." Else printMsg Trace_, Timer - timerStart & " seconds have passed...", FromProcedureName
     Loop Until ResultSendCommand
 End Function
+
+'***************************************************************************************************
+'* 機能　　：ブラウザからのコマンド結果のエラーチェックします
+'---------------------------------------------------------------------------------------------------
+'* 返値    ：コマンド結果のエラー有無論理値
+'* 引数　　：result     拡張機能からのコマンド結果
+'***************************************************************************************************
+Private Function invokeError(Result As Dictionary) As Boolean
+    Const FromProcedureName As String = ThisClassName & ".invokeError"
+
+
+    Dim ErrorCode As Long, ErrorMessage As String, ErrorData As Variant
+    If Result Is Nothing Then
+        ErrorCode = -1 'arbitrary nonzero value, may change in future
+        ErrorMessage = "Timeout or No results"
+        ErrorData = vbEmpty
+        printMsg WARN_, "InvokeMethod Error: [" & ErrorCode & "] " & ErrorMessage, FromProcedureName
+        invokeError = True
+        Set errorDetails = jsConverter.ParseJson("{""name"":""TimeOut"",""errorCode"":" & ErrorCode & ",""message"":""" & ErrorMessage & """}")     'カスタムエラーメッセージJsonで返却
+    ElseIf Result.Exists("error") Then
+        Set errorDetails = Result("error")
+        ErrorCode = errorDetails("errorCode")
+        ErrorMessage = errorDetails("message")
+        printMsg WARN_, "InvokeMethod Error: [" & ErrorCode & "] " & ErrorMessage, FromProcedureName
+        If errorDetails.Exists("stack") Then
+            ErrorData = errorDetails("stack")
+            printMsg WARN_, "       " & ErrorData, FromProcedureName
+        Else
+            ErrorData = vbEmpty ' vbNullString? is errorDetails("data") a string or object?
+        End If
+        invokeError = True
+    Else
+        ErrorCode = 0
+        ErrorMessage = vbNullString
+        ErrorData = vbEmpty
+    End If
+End Function
+
+
 
 '***************************************************************************************************
 '* 機能　　：ブラウザからの受信データの構造をチェックします
@@ -303,7 +385,7 @@ Private Function BrowserReceivedDataCheck(returnPADJson As String, InternalUseMe
             'イベントキャプチャモードなので、JsonPurserを使用する
             FlagValue = FlagValue Or EventCapture
             printMsg Trace_, "A JSON parser is used for processing that requires asynchronous event information.", FromProcedureName
-            Set JsonDictionaryObj = JsonConverter.ParseJson(returnPADJson)
+            Set JsonDictionaryObj = jsConverter.ParseJson(returnPADJson)
         End If
     Else
         FlagValue = FlagValue Or resultCommand
