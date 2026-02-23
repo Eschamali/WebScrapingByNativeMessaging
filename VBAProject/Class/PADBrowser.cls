@@ -32,7 +32,7 @@ Private Const ERR_PROTOCOL  As Long = 902
 
 'ブラウザからのイベント情報を格納する際のDictionaryKey名設定
 Private Const EventsDictionaryKeyName01 As String = "TotalEvents"
-Private Const EventsDictionaryKeyName02 As String = "EventMethods"
+Private Const EventsDictionaryKeyName02 As String = "EventNotify"
 
 
 
