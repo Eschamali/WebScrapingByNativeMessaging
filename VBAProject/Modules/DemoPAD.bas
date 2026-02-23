@@ -117,6 +117,9 @@ Sub Webページ遷移()
     For Each tmp In ResultPAD
         If tmp("url") = TargetURL Then TargetTabID = tmp("id"): Exit For
     Next
+    
+    '見つからない場合は、ここで止める
+    If TargetTabID = 0 Then MsgBox "「" & TargetURL & "」が開いてるタブが見つかりませんでした。", vbCritical, "Not found URL": Exit Sub
 
     '4. URL遷移を行う
     Dim PADparameter As Dictionary
