@@ -607,20 +607,18 @@ Public Function InitialSetup() As Boolean
         "  ""allowed_origins"": [""chrome-extension://" & extID & "/""]" & vbCrLf & _
         "}"
 
-    '5. 4の内容をJSONファイルとして、書き出し
-    With Utf8Converter
+    With New CharacterCodeConversion
+        '5. 4の内容をJSONファイルとして、書き出し
         .BytesToSaveFile .BytesFromString(jsonContent), FolderPath, SaveJsonName
+
+        '6. ラッパーBatに記述する内容を生成
+        Dim BatContent As String
+        BatContent = "@echo off" & vbCrLf & Chr(34) & Application.Path & "\EXCEL.EXE"" /x """ & OneDrivePathToLocalPath(ThisWorkbook.FullName) & Chr(34)
+
+        '7. 6の内容をBatファイルとして、Shift-JIS書き出し
+        .CodePage = CodePageParam.Shift_JIS
+        .BytesToSaveFile .BytesFromString(BatContent), FolderPath, RapperBatName
     End With
-
-    '6. ラッパーBatに記述する内容を生成
-    Dim BatContent As String
-    BatContent = "@echo off" & vbCrLf & Chr(34) & Application.Path & "\EXCEL.EXE"" /x """ & OneDrivePathToLocalPath(ThisWorkbook.FullName) & Chr(34)
-
-    '7. 6の内容をBatファイルとして、書き出し
-    Dim fNum As Integer: fNum = FreeFile
-    Open FolderPath & "\" & RapperBatName For Output As #fNum
-        Print #fNum, BatContent;
-    Close #fNum
 
     '8. レジストリの書き換え準備 (WMI使用)
     Const HKCU              As Long = &H80000001                '現在のログインユーザー単位。本家のPowerAutomateDesktopもこれに倣ってるので
