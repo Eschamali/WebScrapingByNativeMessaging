@@ -124,10 +124,10 @@ End Property
 '---------------------------------------------------------------------------------------------------
 '* 注意事項：・あくまでも、「最後」のエラー情報なので、成功しても消滅しません。`Err.LastDllError`に準拠してます。
 '            ・適切な`invokeName`を実行したつもりなのに返り値が、`Nothing`となるのが、エラーの目印となるので、それでこのエラー情報を見に行ってください。
-'            ・`invokeMethod`の`StopError`が`Flase`だと実質機能しません。
+'            ・`invokeName`の`StopError`が`Flase`だと実質機能しません。
 '***************************************************************************************************
-Property Get LastCDPJsonError() As Dictionary
-    Set LastCDPJsonError = errorDetails
+Property Get LastPADJsonError() As Dictionary
+    Set LastPADJsonError = errorDetails
 End Property
 
 
