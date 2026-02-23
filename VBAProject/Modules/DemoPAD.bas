@@ -36,15 +36,50 @@ Sub StartActivation()
 End Sub
 
 '***************************************************************************************************
-'* 機能　　：現在開いているタブ情報を取得します
+'* 機能　　：現在開いているタブ情報を保存します
 '---------------------------------------------------------------------------------------------------
-'* 注意事項：・ログレベル：Debug にすると分かりやすいと思います
-'            ・アクティベーション処理が既に済んでるとします
+'* 注意事項：アクティベーション処理が既に済んでるとします
 '***************************************************************************************************
 Sub ShowAllTabs()
     Dim PADTest As New PADBrowser
+    Dim UTF8Conv As New CharacterCodeConversion
+    Dim JsonDicObj As New WebJsonConverter
+
+    'アクティベーション処理を飛ばして、設定
     PADTest.reattach
 
     Dim ResultPAD As Object
     Set ResultPAD = PADTest.invokeMethod("GetAllTabsRequest")
+
+    'タブ情報をDownloadsフォルダに保存
+    With UTF8Conv
+        .BytesToSaveFile .BytesFromString(JsonDicObj.ConvertToJson(ResultPAD)), Environ("UserProfile") & "\Downloads", "GetAllTabsRequest.json"
+    End With
 End Sub
+
+'***************************************************************************************************
+'* 機能　　イベントキャプチャテスト
+'---------------------------------------------------------------------------------------------------
+'* 注意事項：・ブラウザのウィンドウアクティブ操作を済ませた後、実行してください
+'            ・アクティベーション処理が既に済んでるとします
+'***************************************************************************************************
+Sub SaveEvent()
+    Dim PADTest As New PADBrowser
+    Dim UTF8Conv As New CharacterCodeConversion
+    Dim JsonDicObj As New WebJsonConverter
+
+    'アクティベーション処理を飛ばして、設定
+    PADTest.reattach
+
+    'イベントキャプチャを有効化
+    Set PADTest.BrowserEvents = New Dictionary
+
+    Dim ResultPAD As Object
+    Set ResultPAD = PADTest.invokeMethod("GetAllTabsRequest")
+
+    'イベント情報をDownloadsフォルダに保存
+    With UTF8Conv
+        .BytesToSaveFile .BytesFromString(JsonDicObj.ConvertToJson(PADTest.BrowserEvents)), Environ("UserProfile") & "\Downloads", "Event.json"
+    End With
+End Sub
+
