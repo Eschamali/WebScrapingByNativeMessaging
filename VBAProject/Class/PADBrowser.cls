@@ -137,12 +137,12 @@ End Property
 '***************************************************************************************************
 '* 機能　　：Method名と、parametersを渡して、低レベルにてブラウザ制御をします
 '---------------------------------------------------------------------------------------------------
-'* 返り値　：拡張機能へのコマンド実行結果のうち、`Result`オブジェクトのみ。失敗時は、`Nothing`となります。
+'* 返り値　：拡張機能へのコマンド実行結果のうち、`Result`項目のみ。失敗時は、`Nothing`となります。
 '* 引数　　：methodName     name項目にあたります
 '            params         parameters項目にあたります。Json-Dictionary形式で、KeyとItemを事前に定義したオブジェクト変数を指定します。
 '            StopError      `True`で、実行失敗時に`Err.Raise`で停止し、以降の処理を止めます
 '***************************************************************************************************
-Public Function invokeName(methodName As String, Optional params As Scripting.Dictionary, Optional StopError As Boolean = True) As Object
+Public Function invokeName(methodName As String, Optional params As Scripting.Dictionary, Optional StopError As Boolean = True) As Variant
     Const FromProcedureName As String = ThisClassName & ".invokeMethod"
 
 
@@ -161,12 +161,16 @@ Public Function invokeName(methodName As String, Optional params As Scripting.Di
         Else
             'エラーになったmethod名だけログ出して続行
             printMsg WARN_, "Failed to invoke name """ & methodName & """", FromProcedureName
+            Set invokeName = Nothing    'エラー時は、`nothing`オブジェクトとします
         End If
     End If
 
 
-    'コマンド結果のうち、「result」項目オブジェクト飲み取り出して返却します
-    If results.Exists("result") Then Set invokeName = results.Item("result")
+    'コマンド結果のうち、「result」項目オブジェクトのみ、取り出して返却します
+    If results.Exists("result") Then
+        'Object型の場合は、`Set`を使用して代入します
+        If IsObject(results.Item("result")) Then Set invokeName = results.Item("result") Else invokeName = results.Item("result")
+    End If
     printMsg Debug_, "Invoked """ & methodName & """ with result: " & jsConverter.ConvertToJson(results), FromProcedureName
 End Function
 
