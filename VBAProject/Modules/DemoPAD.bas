@@ -82,4 +82,3 @@ Sub SaveEvent()
         .BytesToSaveFile .BytesFromString(JsonDicObj.ConvertToJson(PADTest.BrowserEvents)), Environ("UserProfile") & "\Downloads", "Event.json"
     End With
 End Sub
-
