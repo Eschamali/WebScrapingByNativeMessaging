@@ -30,6 +30,10 @@ Private Const ERR_TIMEOUT   As Long = 900
 Private Const ERR_PIPE      As Long = 901
 Private Const ERR_PROTOCOL  As Long = 902
 
+'ブラウザからのイベント情報を格納する際のDictionaryKey名設定
+Private Const EventsDictionaryKeyName01 As String = "TotalEvents"
+Private Const EventsDictionaryKeyName02 As String = "EventMethods"
+
 
 
 '***************************************************************************************************
@@ -40,7 +44,6 @@ Private core        As PADCore
 Private ErrorDetail As New WinApiError  'エラーコードから、詳細を取得するやつ
 
 Private LogControl      As New Logger        'ログレベルの制御
-Private Utf8Converter   As New CharacterCodeConversion
 Private JsonConverter   As New WebJsonConverter
 Private timerOut        As Long
 Private lngLastID       As Long
@@ -49,6 +52,53 @@ Private doLog As Boolean                'ログファイルにも、デバッグ
 Private logPath As String               'ログファイルの保存フォルダパス
 Private seeRawSendMsgDbg As Boolean     'set to True if needing to see the raw json msg received from the browser for debugging
 Private objAllMessages As Dictionary    '拡張機能からのイベントデータを蓄積するための変数です
+
+
+
+'***************************************************************************************************
+'                                  ■■■ プロパティメソッド ■■■
+'***************************************************************************************************
+'* 機能　　：ブラウザからのイベント内容に関するプロパティを行います
+'---------------------------------------------------------------------------------------------------
+'* GET返値 ：呼び出した時点での、ブラウザイベント内容
+'* LET引数 ：置き換えるDictionary変数。基本は、New Dictionary を渡してのリセットです
+'---------------------------------------------------------------------------------------------------
+'* 機能説明：・`Set BrowserEvents` に、`New Dictionary`を渡すと、イベント記録モードになります。
+'            ・`Set BrowserEvents` に、`Nothing`を渡すと、イベント破棄モードになります。
+'* 注意事項：Set プロパティ使用時、簡易的なDictionary構造のチェックを行います。構造が違うDictionaryを渡された場合、警告メッセージが出て、停止します。
+'***************************************************************************************************
+Property Get BrowserEvents() As Dictionary
+    Set BrowserEvents = objAllMessages
+End Property
+
+Property Set BrowserEvents(ObjDic As Dictionary)
+    Const FromProcedureName As String = ThisClassName & ".BrowserEvents"
+
+
+    'SetされたDictionaryの構造をチェックします
+    '1. そもそもDictionary オブジェクトが備わっているか？
+    If ObjDic Is Nothing Then
+        'Nothing 処理。以降は、イベントキャプチャはされません。
+        Set objAllMessages = Nothing
+        printMsg info_, "Event capture save data has been discarded. Event capture will not be performed.", FromProcedureName
+
+    '2. まっさらの場合
+    ElseIf ObjDic.Count = 0 Then
+        '初期化処理。これにより、イベントキャプチャを開始します。
+        Set objAllMessages = FormatDictionary_BrowserEvents
+        printMsg info_, "A new event capture save data has been created. Starts event capture.", FromProcedureName
+
+    '3. 指定のKeyがあるか？
+    ElseIf ObjDic.Exists(EventsDictionaryKeyName01) And ObjDic.Exists(EventsDictionaryKeyName02) And ObjDic.Count = 2 Then
+        '既存データをセット。これにより、このDictionaryにイベントキャプチャの追記が行われます。
+        Set objAllMessages = ObjDic
+        printMsg info_, "Existing event capture save data was successfully loaded. Resume event capture with this save data.", FromProcedureName
+
+    '4. 不正なDictionary 形式なのでエラーで止める
+    Else
+        printMsg ERROR_, "Event capture save data structure is invalid.", FromProcedureName, doRaiseError:=True
+    End If
+End Property
 
 
 
@@ -287,7 +337,74 @@ Private Function BrowserReceivedDataCheck(returnPADJson As String, InternalUseMe
     judgementBit = browserEvent
     If (FlagValue And mask) = judgementBit Then BrowserReceivedDataCheck = False: Exit Function
 
+
+    '======================================= イベント情報を格納するフェーズへ =======================================
+    'パブリック(呼び出し側使用)用
+    If objAllMessages Is Nothing Then
+        printMsg Trace_, "No event information is required on the module side.", FromProcedureName
+    Else
+        printMsg Trace_, "The module is requesting the accumulation of event information. Saving...", FromProcedureName
+        OnNewEventReceived objAllMessages, JsonDictionaryObj
+    End If
+
+    'プライベート(クラス内変数)用
+    If InternalUseMessages Is Nothing Then
+        printMsg Trace_, "No event information needed inside the class.", FromProcedureName
+    Else
+        printMsg Trace_, "The class is requesting the accumulation of event information. Saving...", FromProcedureName
+        OnNewEventReceived InternalUseMessages, JsonDictionaryObj
+    End If
 End Function
+
+'***************************************************************************************************
+'* 機能　　：イベントの「種類（メソッド名）」ごとの仕切りを入れ、そこにCollectionを入れていきます
+'---------------------------------------------------------------------------------------------------
+'* 実質返値：Accumulator
+'* 引数　　：Accumulator    これまでの格納イベント。
+'            eventData      Json-Dictionry済みのブラウザからのイベントデータ
+'---------------------------------------------------------------------------------------------------
+'* 機能説明：メソッド名をキーにし、それぞれの中では、時系列が保つように追加していきます。
+'            これにより、「特定の"種類"のイベント」を、個別にチェックしやすくなります。
+'            時系列データ(Index値)と合計キャプチャ数もおまけとして残しておきます。
+'* 注意事項；このプロシージャを呼び出す前に、イベントデータであるかのチェックを済ませてください
+'***************************************************************************************************
+Private Sub OnNewEventReceived(Accumulator As Dictionary, eventData As Dictionary)
+    Const FromProcedureName As String = ThisClassName & ".OnNewEventReceived"
+
+
+    'イベント名を取得
+    Dim EventMethodName As String: EventMethodName = eventData("notify")
+
+    ' 合計イベントキャプチャ数をカウントする
+    Accumulator(EventsDictionaryKeyName01) = Accumulator(EventsDictionaryKeyName01) + 1
+    printMsg Trace_, "Now Total of accumulated events :" & Accumulator(EventsDictionaryKeyName01), FromProcedureName
+
+    ' インデックスも付与(1始まり)
+    ' これにより、全体の時系列データも保持できます
+    eventData.Add "__index__", Accumulator(EventsDictionaryKeyName01)
+
+
+    '格納開始
+    ' 1.イベントメソッドデータがあるDictionaryに遷移
+    Dim EventsDictionary As Dictionary: Set EventsDictionary = Accumulator(EventsDictionaryKeyName02)
+
+    ' 2. このイベント名の`Collection`が、すでにあるか？
+    Dim eventList As Collection
+    If EventsDictionary.Exists(EventMethodName) Then
+        ' あれば、そのコレクションデータをセット
+        Set eventList = EventsDictionary(EventMethodName)
+        printMsg Debug_, "Stored event data from the browser. - " & EventMethodName, FromProcedureName
+    Else
+        ' なければ、新しい`Collection`をセット
+        Set eventList = New Collection
+        EventsDictionary.Add EventMethodName, eventList
+
+        printMsg Debug_, "A new type of event. - " & EventMethodName, FromProcedureName
+    End If
+
+    ' 3. セットされたコレクションに、今回のイベントの詳細データを、追加する
+    eventList.Add eventData
+End Sub
 
 '***************************************************************************************************
 '* 機能　　：ブラウザからの受信データの構造をチェックする際の1つ、`result`チェックを行います
@@ -378,6 +495,20 @@ Private Function GetContentsNotify(jsonString As String, ByRef notifyValueConten
         GetContentsNotify = False
         printMsg Trace_, "This response does not have an `method`.", FromProcedureName
     End If
+End Function
+
+'***************************************************************************************************
+'* 機能　　：ブラウザイベント情報を格納するためのフォーマットDictionaryを作成します
+'---------------------------------------------------------------------------------------------------
+'* 返り値  ：フォーマット済みDictionary
+'***************************************************************************************************
+Private Function FormatDictionary_BrowserEvents() As Dictionary
+    '新規オブジェクトセット
+    Set FormatDictionary_BrowserEvents = New Dictionary
+
+    '初期構造を作成します
+    FormatDictionary_BrowserEvents.Add EventsDictionaryKeyName01, 0                 '合計イベントキャプチャ数
+    FormatDictionary_BrowserEvents.Add EventsDictionaryKeyName02, New Dictionary    'イベントキャプチャDictionaryデータ
 End Function
 
 '***************************************************************************************************
