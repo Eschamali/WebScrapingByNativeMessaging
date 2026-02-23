@@ -74,6 +74,9 @@
 
 ## 🚀 使い方（セットアップ手順）
 
+> [!IMPORTANT]
+> 試す前に、`PowerAutomate Desktop`は全て閉じてください
+
 ![設定画面UI](doc/SettingUI.png)
 
 実際にこの「黒魔術」がどんな挙動をするのか試してみたい猛者は、以下の手順で環境を準備してください。
@@ -250,6 +253,192 @@ VBEあるいは、「alt + F8」から`最後のアクティブウィンドウ�
 > マクロが成功すると、対象のブラウザ上部にメッセージボックス（alert）が表示されます。  
 > しかしブラウザの仕様上、この alert の「OK」ボタンを押すまでJavaScriptの処理が一時停止し、拡張機能からVBAへの「コマンド完了通知」が返ってきません。  
 > 放置するとVBA側でタイムアウトエラーが発生して死ぬので、ドヤ顔でアラートを眺めるのは数秒にとどめ、なるべく早く「OK」を押してあげてください🥺
+
+## 👑 最終章：【真・PAD方式】名前付きパイプによるアーキテクチャ完全再現 (The Ultimate PoC)
+
+本PoCの最終到達点として、実際の製品版「Power Automate Desktop (PAD)」が内部で採用している3層アーキテクチャの完全再現を行いました。
+
+これまでのデモは「Excel(Host) ⇔ ブラウザ」の2層構造でしたが、ここではさらに外側に「司令塔」となる別のアプリケーション（今回はWord VBAを使用）を配置し、 **プロセス間通信（IPC）** を用いて遠隔操作を行います。
+
+### 🏗️ 構築した3層アーキテクチャの全容
+
+* **製品版PADの構造】**  
+`PAD本体` ==(名前付きパイプ)==> `PAD.BrowserNativeMessageHost.exe (仲介役)` ==(匿名パイプ)==> `ブラウザ`
+
+* **【本PoCの最終形態】**  
+`Word VBA (司令塔)`==(名前付きパイプ)==> `Excel VBA (自作Host)` ==(匿名パイプ)==> `ブラウザ`
+
+異なるアプリケーション（WordとExcel）を、OSの深淵たる **名前付きパイプ（Named Pipes）** で直結し、独自の「やり取りのルール（プロトコル）」でチャットさせるという、狂気とロマンの構成です。
+
+### 💻 実行プロセス（チャットの原点を見る）
+
+> [!NOTE]
+> VBAはシングルスレッドのため、非同期でのパイプ待機を行うと発狂（フリーズ）します。  
+> そのため、本概念実証ではあえて **「手動で1ステップずつWinAPIを叩いて通信のキャッチボールを行う」** という、極めてプリミティブ（原始的）な同期ステップを採用しています。
+
+実行手順は以下の通りです。ウィンドウを2つ並べて、プロセス同士が「会話」する瞬間を見届けてください。
+
+1. WordのVBE を開き、[このコード](VBAProject\Modules\DemoConnectPipeWithNameForWord.bas)を丸ごとモジュールへコピペしてください
+2. **[Host側] パイプの開設 (Excel)**  
+Excel側で`CreateNamedPipe`APIを実行し、サーバーとして待機します。
+
+> [!IMPORTANT]
+> この瞬間、Excelはクライアントが来るまでフリーズします
+
+```bas
+' --- 0. パイプ開設と接続待ち ---
+Sub Step0_OpenServer()
+    ' パイプを作成
+    hPipe = CreateNamedPipe(PIPE_NAME, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE Or PIPE_WAIT, 1, 1024, 1024, 0, 0)
+    If hPipe = INVALID_HANDLE_VALUE Then
+        MsgBox "パイプの作成に失敗しました??", vbCritical
+        Exit Sub
+    End If
+    
+    Debug.Print "パイプを開設しました。Wordからの接続を待っています..."
+    
+    ' ★注意★ ここでExcelはWordが繋いでくるまで「フリーズ（待機状態）」になります！
+    ConnectNamedPipe hPipe, 0
+    
+    ' Wordが繋ぐとフリーズが解けてここに進む
+    Debug.Print "Wordが接続してきました！"
+End Sub
+```
+
+3. **[Client側] 接続と命令の送信 (Word)**  
+Word側から`CreateFile`でExcelのパイプに接続し、`WriteFile`で「URL遷移をお願い！」というテキストを流し込みます。
+
+> [!TIP]
+> 繋がった瞬間にExcelのフリーズが解け、通信が確立します
+
+```bas
+' --- 1. Excelに接続して命令を送る ---
+Sub Step1_ConnectAndSend()
+    ' Excelが開設したパイプに接続
+    hPipe = CreateFile(PIPE_NAME, GENERIC_READ Or GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0)
+    
+    If hPipe = INVALID_HANDLE_VALUE Then
+        MsgBox "Excelのパイプが見つかりません。Step0を実行しましたか？", vbCritical
+        Exit Sub
+    End If
+    Debug.Print "Excelのパイプに接続成功！"
+    
+    ' Excelに命令を送る
+    Dim commandMsg As String
+    commandMsg = "URL遷移をお願いします！"
+    
+    Dim buffer() As Byte
+    Dim bytesWritten As Long
+    buffer = StrConv(commandMsg, vbFromUnicode)
+    
+    WriteFile hPipe, buffer(0), UBound(buffer) + 1, bytesWritten, 0
+    Debug.Print "Excelに命令を送信しました！"
+End Sub
+```
+
+4. **[Host側] 命令の受信と翻訳 (Excel)**  
+ExcelがWordからのメッセージを受信し、それをネイティブ メッセージング用のJSONフォーマット（4バイトヘッダ付き）に翻訳して、今度はブラウザへ向けて（匿名パイプ経由で）発射します。
+
+```bas
+' --- 2. Wordからの命令を受信 ---
+Sub Step2_ReceiveFromWord()
+    Dim buffer(0 To 1023) As Byte
+    Dim bytesRead As Long
+    Dim msg As String
+    
+    ' Wordからのメッセージを読み取る（文字が来るまで待機）
+    ReadFile hPipe, buffer(0), 1024, bytesRead, 0
+    
+    If bytesRead > 0 Then
+        ' バイト配列を文字列に変換 (UTF-8等ではなく手抜きでShift-JIS変換)
+        msg = StrConv(LeftB(buffer, bytesRead), vbUnicode)
+        Debug.Print "Wordからの命令: " & msg
+        ' セルに書き出してもOK！
+    End If
+End Sub
+```
+
+5. **[Host側] ブラウザからの応答と返信 (Excel)**  
+ブラウザを操作し終えたら、その結果を再度Wordへ向けて WriteFile で送り返します。
+
+```bas
+' --- 3. ブラウザへ送信 ＆ 4. Wordへ結果を返す ---
+Sub Step3and4_SendResultToWord()
+    ' 【本来のStep3】 ここで受け取った命令(msg)をもとに Select Case 等で
+    ' ネイティブメッセージングの SendMessage / ReceiveMessage を行います。
+    ' Call Webページ遷移
+    ' 今回は概念実証なので、モック（ダミー結果）を作ります。
+    
+    Dim resultMsg As String
+    resultMsg = "ブラウザ操作完了！(Excelより愛を込めて)"
+    
+    Dim buffer() As Byte
+    Dim bytesWritten As Long
+    buffer = StrConv(resultMsg, vbFromUnicode)
+    
+    ' Wordへ結果を送信！
+    WriteFile hPipe, buffer(0), UBound(buffer) + 1, bytesWritten, 0
+    Debug.Print "Wordへ結果を返しました！"
+    
+    ' 最後にパイプをお片付け
+    ' ※Wordで受信後、続行すること
+    Stop
+    DisconnectNamedPipe hPipe
+    CloseHandle hPipe
+End Sub
+```
+
+> [!NOTE]
+> Demoコードでは、脳内補完扱いとします。
+
+6. **[Client側] 結果の受領 (Word)**  
+WordがExcelからの完了報告を受け取り、メッセージボックスを表示してミッションコンプリートです。
+
+```bas
+' --- 5. Excelからの結果を受け取る ---
+Sub Step5_ReceiveFromExcel()
+    Dim buffer(0 To 1023) As Byte
+    Dim bytesRead As Long
+    Dim resultMsg As String
+    
+    ' Excelからの返信を待つ
+    ReadFile hPipe, buffer(0), 1024, bytesRead, 0
+    
+    If bytesRead > 0 Then
+        resultMsg = StrConv(LeftB(buffer, bytesRead), vbUnicode)
+        MsgBox "Excelからの報告: " & vbCrLf & resultMsg, vbInformation, "ミッション完了"
+    End If
+    
+    ' パイプをお片付け
+    CloseHandle hPipe
+End Sub
+```
+
+> [!IMPORTANT]
+> Excel側の`Stop`開放も忘れずに...
+
+各イミディエイトウィンドウには、下記のように出るはずです
+![イミディエイトウィンドウ](doc/DemoStep7.png)
+
+## ❓ よくある質問とトラブルシューティング (Q&A)
+
+### ハイジャックを解除して、本来のPower Automate（`PAD.BrowserNativeMessageHost.exe`）に戻すにはどうすればいい？
+
+Power Automate Desktop (PAD) 本体を再起動するだけです！  
+実はPADには「起動時に自身のレジストリパスが改ざんされていないかチェックし、勝手に正規のパスへ修復する」というお節介（今回に限っては非常にありがたい）機能が備わっています。PADを再起動するだけで、私たちが書き換えた黒魔術レジストリは綺麗に浄化されます😋
+
+### なんかこのExcelツール、×ボタンで閉じてもゾンビのように勝手に再復活してくるんだけど…😱
+
+Power Automate拡張機能側の「執念深い仕様」が原因です。  
+拡張機能のバックグラウンドプロセスは「ホスト（中継役）との通信が切れたら、即座に再起動して通信を維持する」ように設計されています。そのため、Excelを閉じてもブラウザ側が「あ、ホストが死んだ！生き返らせなきゃ！」と即座に魔法を詠唱してしまいます。
+
+この無限ループ（ゾンビ化）から抜け出し、完全に元の平和な環境に戻すには、以下の「除霊ステップ」を踏んでください。
+
+1. 召喚を止める: ブラウザの拡張機能管理画面を開き、Power Automate拡張機能を一旦 「OFF（無効）」 にします。
+2. 呪いを解く: Power Automate Desktop 本体を再起動します。（Q1の通り、これでレジストリが正規のパスに修復されます）
+3. 正規ルートの開通: 再度、ブラウザ側でPower Automate拡張機能を 「ON（有効）」 に戻します。
+
+これで、次からは本来の`PAD.BrowserNativeMessageHost.exe`が正常に呼び出され、製品版のPADが何事もなかったかのように機能するようになります！🫠
 
 ## 最後に
 
