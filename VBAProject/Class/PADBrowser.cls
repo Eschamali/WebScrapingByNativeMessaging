@@ -418,21 +418,18 @@ Private Function GetContentsResult(jsonString As String, ByRef requestIdValueCon
 
 
     '検索設定
-    Const SearchKeyName     As String = "result"    '検索文字列
-    Const SearchKeyName2    As String = "requestId" '検索文字列
-    Const StartSearchPos    As Long = 3             'あるべき位置
+    Const SearchKeyName     As String = "requestId" '検索文字列
 
 
-    '1. 文字列を探索
+    '1. 文字列を右から、探索
     Dim StartPos As Long
-    StartPos = InStr(StartSearchPos, jsonString, SearchKeyName)
+    StartPos = InStrRev(jsonString, SearchKeyName)
 
-    '2. 所定の位置にない場合は、存在しないとし、抜ける
-    '下記の例に基づき、3文字目にない場合は、コマンド結果ではないとして、扱います。
-    '・{"result":..."requestId":"0"}
-    If StartPos = StartSearchPos Then
-        '3. 後ろから探してみる
-        StartPos = InStrRev(jsonString, SearchKeyName2) + Len(SearchKeyName2) + Len(""":""") '「requestId":"」分、ずらすイメージ
+    '2. 存在しない場合は、抜ける
+    '例　{"result":..."requestId":"0"}
+    If StartPos > 0 Then
+        '3. 「requestId":"」分、ずらす
+        StartPos = StartPos + Len(SearchKeyName) + Len(""":""")
 
         '4. ID値の終点を求める
         Dim EndPos As Long
@@ -441,6 +438,8 @@ Private Function GetContentsResult(jsonString As String, ByRef requestIdValueCon
         '5. ID値を取り出す
         On Error Resume Next
             requestIdValueContents = Mid(jsonString, StartPos, EndPos - StartPos)
+
+            '型変換エラーを利用して、有効な`requestId`値かを確認する
             If Err.Number Then
                 GetContentsResult = False
                 printMsg Trace_, "`requestId`という文字列はありますが、数字ではないようです...", FromProcedureName
