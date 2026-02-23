@@ -75,6 +75,7 @@ End Sub
 Sub Step3and4_SendResultToWord()
     ' 【本来のStep3】 ここで受け取った命令(msg)をもとに Select Case 等で
     ' ネイティブメッセージングの SendMessage / ReceiveMessage を行います。
+    ' Call Webページ遷移
     ' 今回は概念実証なので、モック（ダミー結果）を作ります。
     
     Dim resultMsg As String
