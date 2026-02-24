@@ -15,13 +15,6 @@ Option Explicit
 
 
 '***************************************************************************************************
-'                               ■■■ 必要なWindowsAPI宣言 ■■■
-'***************************************************************************************************
-Private Declare PtrSafe Function SHCreateDirectoryEx Lib "shell32" Alias "SHCreateDirectoryExA" (ByVal hwnd As LongPtr, ByVal pszPath As String, ByVal psa As LongPtr) As Long
-
-
-
-'***************************************************************************************************
 '                                  ■■■ 関連の定数定義 ■■■
 '***************************************************************************************************
 Private Const ThisClassName As String = "PADBrowser"                'ログのトレース用
@@ -661,23 +654,20 @@ Public Function InitialSetup() As Boolean
         Dim appName As String: appName = .Range(.UseRangeName(2, "PADCore.InitRegistry")).value
         Dim description As String: description = .Range(.UseRangeName(3, "PADCore.InitRegistry")).value
 
-        '1-2. ネイティブ メッセージング ホストの構成情報の保存パスの指定
-        Dim FolderPath As String: FolderPath = .Range(.UseRangeName(4, "PADCore.InitRegistry")).value
-
-        '1-3. 使用ブラウザ
+        '1-2. 使用ブラウザ
         '※一旦は、Edge or Chrome のみとする
         Dim ChromeUse As Boolean: ChromeUse = .Range(.UseRangeName(5, "PADCore.InitRegistry")).value
     End With
 
-    '2. フォルダがなければ作成
-    Dim ResultCode As Long
-    ResultCode = SHCreateDirectoryEx(0&, FolderPath, 0&)
+    '2.ネイティブ メッセージング ホストの構成情報の保存パスを、ダイアログで指定
+    '参考 → https://qiita.com/studio_haneya/items/9f5141b667efc3bfa615
+    Dim FolderPath As String
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "ネイティブ メッセージング ホストの構成を定義するファイルを保存するフォルダを選択してください"
+        .InitialFileName = Environ("UserProfile")   '初期位置
 
-    'エラーチェック
-    Select Case ResultCode
-        Case 0, 183
-        Case Else: MsgBox "ネイティブ メッセージング ホストの構成情報の保存先のフォルダ作成に失敗しました。" & vbCrLf & vbCrLf & "＜原因＞" & vbCrLf & ErrorDetail.GetMessage(ResultCode), vbCritical, "ErrorCode：" & ResultCode: Exit Function
-    End Select
+        If .Show Then FolderPath = .SelectedItems(1) Else MsgBox "フォルダの指定をキャンセルしました", vbExclamation, "InitialSetup": Exit Function
+    End With
 
     '3. ラッパーのBatファイルパスを取得し、JSON用にバックスラッシュを二重化
     Dim escapedPath As String: escapedPath = Replace(FolderPath & "\" & RapperBatName, "\", "\\")
@@ -721,6 +711,7 @@ Public Function InitialSetup() As Boolean
 
     '10. キーを作成
     '※既存でも0が返ります
+    Dim ResultCode As Long
     ResultCode = objReg.CreateKey(HKCU, TargetKeyPath)
     If ResultCode <> 0 Then MsgBox "レジストリキーパス「" & TargetKeyPath & "」の作成に失敗しました。", vbCritical, "ErrorCode：" & ResultCode: Exit Function
 
