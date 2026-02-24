@@ -23,6 +23,8 @@ Sub 初期設定()
         '「はい」を選んだら、拡張機能のリンクを開き、このブックを閉じます
         If MsgboxCode = vbYes Then
             CreateObject("WScript.Shell").Run "https://microsoftedge.microsoft.com/addons/detail/microsoft-power-automate/kagpabjoboikccfdghpdlaaopmgpgfdc"
+
+            Application.DisplayAlerts = False   '確認メッセージが表示されてないようにする
             ThisWorkbook.Close
             'Application.Quit   '同一インスタンスの開いてるブックも巻き込んで消えるので却下
         End If
