@@ -25,6 +25,7 @@ Property Get UseRangeName(RangeID As Long, ErrorSource As String) As String
         Case 1: UseRangeName = "拡張機能ID"
         Case 2: UseRangeName = "拡張機能内部名称"
         Case 3: UseRangeName = "説明文"
+        Case 4: UseRangeName = "Excelを直接指定"
         Case 5: UseRangeName = "Chromeで使用"
         Case 6: UseRangeName = "LogLevel"
         Case 7: UseRangeName = "イミディエイトに表示"

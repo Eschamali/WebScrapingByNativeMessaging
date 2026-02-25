@@ -644,7 +644,8 @@ End Sub
 Public Function InitialSetup() As Boolean
     'ファイル名設定など
     Const RapperBatName As String = "StartNewInstanceExcel.bat"
-    Const SaveJsonName As String = "host_manifest.json"
+    Const SaveJsonName  As String = "host_manifest.json"
+    Const ExcelExeName  As String = "EXCEL.EXE"
 
 
     '1. セルから設定を取得
@@ -657,6 +658,9 @@ Public Function InitialSetup() As Boolean
         '1-2. 使用ブラウザ
         '※一旦は、Edge or Chrome のみとする
         Dim ChromeUse As Boolean: ChromeUse = .Range(.UseRangeName(5, "PADCore.InitRegistry")).value
+
+        '1-3. 実行方法を取得
+        Dim DirectExcelMode As Boolean: DirectExcelMode = .Range(.UseRangeName(4, "PADCore.InitRegistry")).value
     End With
 
     '2.ネイティブ メッセージング ホストの構成情報の保存パスを、ダイアログで指定
@@ -669,8 +673,9 @@ Public Function InitialSetup() As Boolean
         If .Show Then FolderPath = .SelectedItems(1) Else MsgBox "フォルダの指定をキャンセルしました", vbExclamation, "InitialSetup": Exit Function
     End With
 
-    '3. ラッパーのBatファイルパスを取得し、JSON用にバックスラッシュを二重化
-    Dim escapedPath As String: escapedPath = Replace(FolderPath & "\" & RapperBatName, "\", "\\")
+    '3. JSON用に`Path`項目をバックスラッシュを二重化
+    '※ラッパーのBatファイルパス or Excel.exe フルパス
+    Dim escapedPath As String: escapedPath = Replace(IIf(DirectExcelMode, Application.Path & "\" & ExcelExeName, FolderPath & "\" & RapperBatName), "\", "\\")
 
     '4. ネイティブ メッセージング ホストの構成情報になるJSON文字列の生成
     Dim jsonContent As String
@@ -687,12 +692,18 @@ Public Function InitialSetup() As Boolean
         .BytesToSaveFile .BytesFromString(jsonContent), FolderPath, SaveJsonName
 
         '6. ラッパーBatに記述する内容を生成
-        Dim BatContent As String
-        BatContent = "@echo off" & vbCrLf & Chr(34) & Application.Path & "\EXCEL.EXE"" /x """ & OneDrivePathToLocalPath(ThisWorkbook.FullName) & Chr(34)
+        '※Excel.exe直の場合は生成しません
+        If Not (DirectExcelMode) Then
+            Dim BatContent As String
+            BatContent = "@echo off" & vbCrLf & Chr(34) & Application.Path & "\" & ExcelExeName & Chr(34) & " /x """ & OneDrivePathToLocalPath(ThisWorkbook.FullName) & Chr(34)
 
-        '7. 6の内容をBatファイルとして、Shift-JIS書き出し
-        .CodePage = CodePageParam.Shift_JIS
-        .BytesToSaveFile .BytesFromString(BatContent), FolderPath, RapperBatName
+            '7. 6の内容をBatファイルとして、Shift-JIS書き出し
+            .CodePage = CodePageParam.Shift_JIS
+            .BytesToSaveFile .BytesFromString(BatContent), FolderPath, RapperBatName
+        Else
+            '7. 既存のBatファイルがある場合は削除します
+            If Dir(FolderPath & "\" & RapperBatName) <> "" Then Kill FolderPath & "\" & RapperBatName
+        End If
     End With
 
     '8. レジストリの書き換え準備 (WMI使用)
